@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llinea — Incident Timeline Normalizer</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo">llinea</span><span class="tag">incident timeline normalizer</span></div>
+  <p class="sub">Tempel log dari zona waktu berbeda — syslog, SIEM JSON, histori browser — dan lihat satu alur kronologis yang sudah dinormalisasi ke WIB, lengkap dengan kandidat lateral movement.</p>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="row">
+      <label for="src-tz">Zona waktu untuk timestamp tanpa offset</label>
+      <select id="src-tz">
+        <option value="420" selected>WIB (UTC+7)</option>
+        <option value="480">WITA (UTC+8)</option>
+        <option value="540">WIT (UTC+9)</option>
+        <option value="0">UTC</option>
+        <option value="-300">US Eastern (UTC−5)</option>
+        <option value="60">Central Europe (UTC+1)</option>
+      </select>
+      <button id="btn-sample" type="button">Muat contoh insiden</button>
+      <button id="btn-parse" type="button" class="primary">Normalisasi &amp; urutkan</button>
+      <label class="file">Buka file log <input id="file" type="file" accept=".log,.txt,.json,.csv,.jsonl"></label>
+    </div>
+    <textarea id="input" rows="12" spellcheck="false" placeholder="Tempel log di sini — satu event per baris. Contoh:&#10;Oct 30 02:14:09 web01 sshd[421]: Failed password for admin from 203.0.113.7&#10;2026-10-30T09:15:22+07:00 user admin logged in on db01&#10;{&quot;timestamp&quot;: &quot;2026-10-30T02:20:11Z&quot;, &quot;event&quot;: &quot;sudo session opened&quot;, &quot;host&quot;: &quot;db01&quot;, &quot;user&quot;: &quot;admin&quot;}"></textarea>
+    <p class="hint">Format yang dikenali: syslog RFC 3164 &amp; 5424, ISO 8601 (dengan / tanpa offset), JSON SIEM satu objek per baris, histori browser CSV, dan datetime umum <code>YYYY-MM-DD HH:MM:SS</code> / <code>DD/MM/YYYY HH:MM:SS</code>. Semua pemrosesan 100% di browser — tidak ada data yang diunggah.</p>
+  </section>
+
+  <section class="panel" id="results" hidden>
+    <div class="stats" id="stats"></div>
+    <div class="row filters">
+      <input id="search" type="search" placeholder="Cari teks, host, user, atau IP…">
+      <select id="filter-source"><option value="">Semua sumber</option></select>
+      <label><input id="filter-chain" type="checkbox"> Hanya kandidat lateral movement</label>
+      <button id="btn-json" type="button">Ekspor JSON</button>
+      <button id="btn-csv" type="button">Ekspor CSV</button>
+    </div>
+    <p id="skipped" class="skipped"></p>
+    <ol class="timeline" id="timeline"></ol>
+    <p id="empty" class="empty" hidden>Tidak ada event yang cocok dengan filter.</p>
+  </section>
+</main>
+
+<footer>
+  <p>llinea v1.0.0 — normalisasi waktu bersifat aritmetik (offset eksplisit selalu menang atas zona waktu asumsi). Timestamp syslog RFC 3164 tanpa tahun memakai tahun berjalan.</p>
+</footer>
+
+<script src="app.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let allEvents = [];
+let skippedCount = 0;
+
+const SAMPLE = [
+  'Oct 30 02:14:09 web01 sshd[421]: Failed password for admin from 203.0.113.7 port 51234 ssh2',
+  '2026-10-30T02:15:41Z web01 sshd[422]: Accepted password for admin from 203.0.113.7 port 51240 ssh2',
+  '2026-10-30T09:20:11+07:00 admin sudo session opened on db01',
+  '{"timestamp": "2026-10-30T02:25:03Z", "event": "file accessed /etc/shadow", "host": "db01", "user": "admin", "src_ip": "203.0.113.7"}',
+  '2026-10-30 09:30:00,https://internal-wiki.example.local/runbooks,Runbook: rotate database credentials',
+  '2026-10-30T02:35:47-05:00 workstation-14 EDR alert: credential dumping tool detected for user admin',
+].join('\n');
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function render() {
+  const q = $('search').value.trim().toLowerCase();
+  const src = $('filter-source').value;
+  const chainOnly = $('filter-chain').checked;
+  const list = allEvents.filter((ev) =>
+    (!q || (ev.message + ' ' + (ev.host || '') + ' ' + (ev.user || '') + ' ' + (ev.src_ip || '')).toLowerCase().includes(q)) &&
+    (!src || ev.source === src) && (!chainOnly || ev.chain));
+  const tl = $('timeline');
+  tl.innerHTML = list.map((ev) => {
+    const meta = [ev.source, ev.host, ev.user ? 'user ' + ev.user : '', ev.src_ip].filter(Boolean).join(' · ');
+    return '<li class="event sev-' + esc(ev.severity) + (ev.chain ? ' chain' : '') + '">' +
+      '<time title="' + esc(formatUTC(ev.epoch)) + '">' + esc(formatWIB(ev.epoch)) + '</time>' +
+      '<div class="msg">' + esc(ev.message) + '</div>' +
+      '<div class="meta">' + esc(meta) + (ev.chain ? ' <span class="chain-badge">kandidat lateral movement</span>' : '') + '</div>' +
+      '</li>';
+  }).join('');
+  $('empty').hidden = list.length > 0;
+  $('skipped').textContent = skippedCount
+    ? skippedCount + ' baris dilewati (tanpa timestamp yang dikenali) — baris lain tetap ditampilkan.'
+    : '';
+}
+
+function parse() {
+  const naive = parseInt($('src-tz').value, 10);
+  const { events, skipped } = parseLogs($('input').value, naive);
+  allEvents = markChains(events);
+  skippedCount = skipped.length;
+  const hosts = new Set(allEvents.map((e) => e.host).filter(Boolean)).size;
+  const users = new Set(allEvents.map((e) => e.user).filter(Boolean)).size;
+  const span = allEvents.length
+    ? 'rentang ' + formatWIB(allEvents[0].epoch) + ' → ' + formatWIB(allEvents[allEvents.length - 1].epoch)
+    : 'tidak ada event';
+  $('stats').innerHTML = '<strong>' + allEvents.length + ' event</strong> · ' + hosts + ' host · ' + users + ' user · ' +
+    allEvents.filter((e) => e.chain).length + ' kandidat lateral movement · ' + esc(span);
+  const sel = $('filter-source');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">Semua sumber</option>' +
+    [...new Set(allEvents.map((e) => e.source))].map((s) => '<option>' + esc(s) + '</option>').join('');
+  sel.value = keep;
+  $('results').hidden = false;
+  render();
+}
+
+function download(name, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+$('btn-parse').addEventListener('click', parse);
+$('btn-sample').addEventListener('click', () => { $('input').value = SAMPLE; parse(); });
+$('search').addEventListener('input', render);
+$('filter-source').addEventListener('change', render);
+$('filter-chain').addEventListener('change', render);
+$('btn-json').addEventListener('click', () => download('llinea-timeline.json', JSON.stringify(allEvents, null, 2), 'application/json'));
+$('btn-csv').addEventListener('click', () => download('llinea-timeline.csv', toCSV(allEvents), 'text/csv'));
+$('file').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  $('input').value = await f.text(); parse();
+});
+</script>
+</body>
+</html>
