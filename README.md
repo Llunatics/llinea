@@ -36,13 +36,18 @@ python3 -m http.server 8000
 | Timestamp without offset | Interpreted in the selected assumed timezone |
 | Syslog RFC 3164 (no year) | Current year is assumed |
 | Line with no recognizable timestamp | Skipped and counted; all other lines still render |
+| Invalid date/time or offset (Feb 30, hour 25, `+99:99`) | Skipped and counted — never silently rolled over to another instant |
+| Syslog RFC 5424 with MSGID / structured data | Parsed (msgid and `[...]` blocks are consumed, message kept) |
+| ISO 8601 without seconds, or space separator + offset | Parsed; explicit offset still wins |
+| IP-like text with an octet > 255 | Ignored; the first valid IPv4 in the message is used instead |
+| SIEM JSON with a numeric timestamp | Values below 1e11 are read as epoch seconds, the rest as epoch ms |
 | Same user/IP, one host only | Not flagged — a chain needs ≥ 2 distinct hosts |
 | Severity dot | Red = high (failed/denied/malware/error), lime = auth event, grey = info/medium |
 
 ## Tests
 
 ```bash
-node tests/run.js   # 14 assertions, stdlib only
+node tests/run.js   # 20 assertions, stdlib only
 ```
 
 Covers offset conversion, every parser, chronological sorting, chain detection, CSV quoting, and skipped-line counting.

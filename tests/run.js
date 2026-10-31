@@ -93,4 +93,52 @@ check('empty input yields zero events, zero skipped', () => {
   assert.strictEqual(skipped.length, 0);
 });
 
+// --- Audit Sabtu 2026-10-31 (ronde fungsional + adversarial) ---
+
+check('invalid calendar dates are skipped, not rolled over', () => {
+  for (const line of [
+    '2026-02-30 10:00:00 impossible date',
+    '2026-13-01 10:00:00 bad month',
+    '2026-10-30 25:00:00 bad hour',
+    '2026-10-30 10:99:00 bad minute',
+    'Oct 32 10:00:00 web01 sshd[1]: hi',
+  ]) assert.strictEqual(parseLine(line, WIB), null, line);
+});
+
+check('out-of-range offsets are skipped, not shifted', () => {
+  assert.strictEqual(parseLine('2026-10-30T10:00:00+99:99 bad offset', WIB), null);
+  assert.strictEqual(parseLine('2026-10-30T10:00:00+25:00 bad offset', WIB), null);
+  assert.strictEqual(parseLine('2026-10-30 09:30:00+99:99,https://example.local/x,Title', WIB), null);
+});
+
+check('RFC 5424 with real msgid + structured data parses', () => {
+  const ev = parseLine('<165>1 2026-10-30T02:15:22Z db01 app 42 ID47 [exampleSDID@32473 iut="3"] query slow', WIB);
+  assert.strictEqual(ev.host, 'db01');
+  assert.strictEqual(ev.message, 'query slow');
+  const dash = parseLine('<165>1 2026-10-30T02:15:22Z db01 app 42 ID47 - query slow', WIB);
+  assert.strictEqual(dash.message, 'query slow');
+  const multi = parseLine('<165>1 2026-10-30T02:15:22Z db01 app 42 ID47 [a@1 x="1"][b@2 y="2"] query slow', WIB);
+  assert.strictEqual(multi.message, 'query slow');
+});
+
+check('ISO without seconds and space separator with offset parse', () => {
+  const a = parseLine('2026-10-30T09:15 login ok', WIB);
+  assert.strictEqual(formatWIB(a.epoch), '2026-10-30 09:15:00 WIB');
+  const b = parseLine('2026-10-30 09:15:22+07:00 login ok', WIB);
+  const c = parseLine('2026-10-30T02:15:22Z login ok', WIB);
+  assert.strictEqual(b.epoch, c.epoch);
+});
+
+check('invalid IP octets are skipped, first valid IP is kept', () => {
+  const ev = parseLine('2026-10-30 09:00:00 alert from 999.999.999.999 then 203.0.113.7', WIB);
+  assert.strictEqual(ev.src_ip, '203.0.113.7');
+  const only = parseLine('2026-10-30 09:00:00 alert from 999.1.1.1', WIB);
+  assert.strictEqual(only.src_ip, null);
+});
+
+check('SIEM numeric epoch-seconds timestamp parses to the right year', () => {
+  const ev = parseLine('{"timestamp": 1761800000, "event": "x"}', WIB);
+  assert.strictEqual(formatWIB(ev.epoch), '2025-10-30 11:53:20 WIB');
+});
+
 console.log(`\n${n} assertions passed.`);
