@@ -141,4 +141,25 @@ check('SIEM numeric epoch-seconds timestamp parses to the right year', () => {
   assert.strictEqual(formatWIB(ev.epoch), '2025-10-30 11:53:20 WIB');
 });
 
+// --- Audit Minggu 2026-11-01 (fresh-copy re-run + pendalaman) ---
+
+check('SIEM digit-string epoch seconds/ms parse like numeric ones', () => {
+  const s = parseLine('{"timestamp": "1761800000", "event": "x"}', WIB);
+  const num = parseLine('{"timestamp": 1761800000, "event": "x"}', WIB);
+  assert.strictEqual(s.epoch, num.epoch);
+  const sms = parseLine('{"timestamp": "1761800000000", "event": "x"}', WIB);
+  assert.strictEqual(sms.epoch, 1761800000000);
+});
+
+check('lowercase z accepted in ISO, browser CSV and RFC 5424', () => {
+  const a = parseLine('2026-10-30T10:00:00z x', WIB);
+  const b = parseLine('2026-10-30T10:00:00Z x', WIB);
+  assert.strictEqual(a.epoch, b.epoch);
+  const c = parseLine('2026-10-30 09:30:00z,https://example.local/p,Title', WIB);
+  assert.strictEqual(c.source, 'Browser');
+  const d = parseLine('<165>1 2026-10-30T02:15:22z db01 app 42 - - query slow', WIB);
+  assert.strictEqual(d.host, 'db01');
+  assert.strictEqual(d.message, 'query slow');
+});
+
 console.log(`\n${n} assertions passed.`);

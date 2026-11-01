@@ -47,7 +47,7 @@ python3 -m http.server 8000
 ## Tests
 
 ```bash
-node tests/run.js   # 20 assertions, stdlib only
+node tests/run.js   # 22 assertions, stdlib only
 ```
 
 Covers offset conversion, every parser, chronological sorting, chain detection, CSV quoting, and skipped-line counting.

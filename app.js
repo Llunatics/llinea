@@ -83,8 +83,16 @@ function parseLine(line, naiveOffsetMin) {
       const ts = o.timestamp || o.time || o['@timestamp'] || o.ts;
       if (ts) {
         // Numeric timestamps below 1e11 are epoch seconds, not ms
-        // (a 10-digit value as ms would land in Jan 1970).
-        const ms = typeof ts === 'number' ? (ts < 1e11 ? ts * 1000 : ts) : ts;
+        // (a 10-digit value as ms would land in Jan 1970). The same
+        // rule applies to digit-only strings, which some SIEM exports
+        // emit: Date does not parse a bare digit string as an epoch,
+        // so "1761800000" would otherwise be skipped entirely.
+        let ms = ts;
+        if (typeof ts === 'number') ms = ts < 1e11 ? ts * 1000 : ts;
+        else if (typeof ts === 'string' && /^-?\d+$/.test(ts.trim())) {
+          const n = Number(ts.trim());
+          ms = Math.abs(n) < 1e11 ? n * 1000 : n;
+        }
         const d = new Date(ms);
         if (!Number.isNaN(d.getTime())) {
           return finish(d.getTime(), o.event || o.message || o.action || 'event',
@@ -96,7 +104,7 @@ function parseLine(line, naiveOffsetMin) {
   }
 
   // 2. Browser history CSV: 2026-10-30 10:15:22,https://...,Title  (or ; / tab separated)
-  const csv = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?\s*(Z|[+-]\d{2}:?\d{2})?[,\t;]\s*(https?:\/\/\S+)(?:[,\t;]\s*(.*))?$/.exec(text);
+  const csv = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?\s*([Zz]|[+-]\d{2}:?\d{2})?[,\t;]\s*(https?:\/\/\S+)(?:[,\t;]\s*(.*))?$/.exec(text);
   if (csv) {
     const off = csv[7] ? parseOffset(csv[7]) : naiveOffsetMin;
     if (csv[7] && off === null) return null; // explicit but invalid offset: skip, don't fall back to naive
@@ -107,7 +115,7 @@ function parseLine(line, naiveOffsetMin) {
   // 3. Syslog RFC 5424: <165>1 2026-10-30T10:15:22Z host app pid msgid [structured-data] msg
   // MSGID and structured data are real fields (not always '-'), so both are
   // consumed: msgid as one token, SD as '-' or one-or-more [...] elements.
-  const rfc5424 = /^(?:<\d+>)?\d+\s+(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})\s+(\S+)\s+(\S+)(?:\s+\S+)?\s+\S+\s+(?:-|\[.*?\])\s+(.*)$/.exec(text);
+  const rfc5424 = /^(?:<\d+>)?\d+\s+(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?([Zz]|[+-]\d{2}:\d{2})\s+(\S+)\s+(\S+)(?:\s+\S+)?\s+\S+\s+(?:-|\[.*?\])\s+(.*)$/.exec(text);
   if (rfc5424) {
     const off = parseOffset(rfc5424[7]);
     if (off === null) return null;
@@ -118,7 +126,7 @@ function parseLine(line, naiveOffsetMin) {
   // 4. ISO 8601 anywhere at the start: 2026-10-30T10:15:22+07:00 rest
   // Seconds are optional and a space may replace the 'T', so space-separated
   // timestamps carrying an explicit offset are honoured, not skipped.
-  const iso = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?\s+[-:]?\s*(.*)$/.exec(text);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?([Zz]|[+-]\d{2}:?\d{2})?\s+[-:]?\s*(.*)$/.exec(text);
   if (iso) {
     const off = iso[7] ? parseOffset(iso[7]) : naiveOffsetMin;
     if (iso[7] && off === null) return null;

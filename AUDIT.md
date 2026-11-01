@@ -85,9 +85,57 @@ Sekarang angka < 1e11 dibaca sebagai detik, sisanya sebagai ms.
   modern); RFC 3164 tanpa tahun memakai tahun berjalan, jadi log
   31 Des yang dibuka pada 1 Jan akan bergeser setahun ke depan.
 
-## Verdict interim (Sabtu)
+## Ronde Minggu (2026-11-01) — fresh-copy re-run + pendalaman
 
-v1.0.1 solid sebagai normalizer timeline belajar/triage: 6 bug nyata
-diperbaiki, tidak ada bug fungsional/adversarial baru yang ditemukan
-di ronde ini, dan seluruh suite hijau. Verdict final menunggu ronde
-Minggu (fresh-copy re-run).
+Fresh clone dari remote (`ae15d3c`, sama dengan HEAD Sabtu) lolos
+penuh: suite Node 20/20 hijau, dan uji klik UI nyata via jsdom
+13/13 lolos (contoh 6 event kronologis, badge chain, search, filter
+sumber, toggle chain-only, skipped terhitung, empty notice, plus
+4 payload XSS dirender sebagai teks ter-escape tanpa `alert()` dan
+tanpa elemen mentah di DOM). Perf ulang: 10.000 baris dalam 48 ms.
+
+### P2 — Timestamp SIEM epoch sebagai string dilewati (diperbaiki)
+
+`{"timestamp": "1761800000"}` (dan `"1761800000000"`) di-skip total:
+`Date` tidak mem-parse string digit murni sebagai epoch. Beberapa
+ekspor SIEM mengeluarkan epoch sebagai string, jadi event-nya hilang
+dari timeline tanpa jejak. Sekarang string digit murni memakai aturan
+yang sama dengan angka (`< 1e11` = detik, sisanya ms). `timestamp: 0`
+sengaja tetap di-skip (epoch 0 hampir pasti berarti timestamp hilang,
+bukan event tahun 1970).
+
+### P2 — ISO/RFC 5424/CSV dengan `z` kecil dilewati (diperbaiki)
+
+`2026-10-30T10:00:00z` di-skip padahal `parseOffset` sudah menerima
+`z`: regex jalur ISO, RFC 5424, dan browser CSV hanya mengizinkan
+`Z` kapital. Sekarang `[Zz]` di ketiga jalur; `z` kecil terbukti
+menghasilkan epoch yang identik dengan `Z`.
+
+### Diamati, sengaja tidak diubah
+
+- **CSV `;` + judul**: `url;Title` dirender sebagai pesan
+  `— url;Title` (judul menempel di URL, bukan hilang) karena `\S+`
+  rakus menelan `;`. Alternatif (URL malas) justru memotong URL yang
+  mengandung `;` di query — perilaku sekarang lebih aman untuk
+  fidelitas URL; judul tetap terbaca.
+- **Chain case-sensitive**: `Admin` vs `admin` tidak di-chain.
+  User Unix case-sensitive, jadi penggabungan paksa bisa menyatukan
+  dua akun berbeda; perilaku sekarang konservatif (false negative
+  lebih aman daripada false positive di alat triase).
+- **Karakter kontrol di pesan** (mis. ESC) dipertahankan apa adanya:
+  UI meng-escape HTML sehingga aman di browser, dan untuk alat
+  forensik pesan mentah adalah barang bukti — stripping akan mengubah
+  bukti.
+
+Suite: 20 -> 22 asersi, semua hijau (lokal + ulang pasca-fix);
+uji klik jsdom 13/13 hijau.
+
+## Verdict final (Minggu)
+
+v1.0.2 solid sebagai normalizer timeline belajar/triage: total 8 bug
+nyata diperbaiki selama dua ronde audit (6 Sabtu + 2 Minggu), tidak
+ada bug fungsional/adversarial baru yang tersisa dari probe ronde
+ini, seluruh suite hijau di fresh copy maupun lokal, dan UI nyata
+terverifikasi klik-per-klik termasuk ketahanan XSS. Limitasi jujur
+di atas tetap berlaku (satu event per baris, heuristik host/user
+teks bebas, tanpa model DST, tahun 0–99 ditolak).
